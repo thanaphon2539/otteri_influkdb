@@ -1,0 +1,27 @@
+{
+  "collection": "@nestjs/schematics",
+  "sourceRoot": "src",
+  "projects": {
+    "influx": {
+      "type": "library",
+      "root": "libs/influx",
+      "entryFile": "index",
+      "sourceRoot": "libs/influx/src",
+      "compilerOptions": {
+        "tsConfigPath": "libs/influx/tsconfig.lib.json"
+      }
+    },
+    "sqs": {
+      "type": "library",
+      "root": "libs/sqs",
+      "entryFile": "index",
+      "sourceRoot": "libs/sqs/src",
+      "compilerOptions": {
+        "tsConfigPath": "libs/sqs/tsconfig.lib.json"
+      }
+    }
+  },
+  "compilerOptions": {
+    "webpack": true
+  }
+}

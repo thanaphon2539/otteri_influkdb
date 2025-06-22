@@ -1,0 +1,19 @@
+{
+  "moduleFileExtensions": [
+    "js",
+    "json",
+    "ts"
+  ],
+  "rootDir": ".",
+  "testEnvironment": "node",
+  "testRegex": ".e2e-spec.ts$",
+  "transform": {
+    "^.+\\.(t|j)s$": "ts-jest"
+  },
+  "moduleNameMapper": {
+    "influx/influx/(.*)": "<rootDir>/../libs/influx/src/$1",
+    "influx/influx": "<rootDir>/../libs/influx/src",
+    "sqs/sqs/(.*)": "<rootDir>/../libs/sqs/src/$1",
+    "sqs/sqs": "<rootDir>/../libs/sqs/src"
+  }
+}
