@@ -2,7 +2,6 @@ import { Module } from "@nestjs/common";
 import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
 import { ConfigModule } from "@nestjs/config";
-import { PoolingModule } from "./pooling/pooling.module";
 import { InfluxModule } from "influx/influx/influx.module";
 import { SqsModule } from "sqs/sqs/sqs.module";
 
@@ -12,7 +11,6 @@ import { SqsModule } from "sqs/sqs/sqs.module";
       isGlobal: true,
       envFilePath: [".env"],
     }),
-    PoolingModule,
     InfluxModule,
     SqsModule,
   ],

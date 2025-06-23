@@ -13,6 +13,7 @@ import dayjs from "dayjs";
 import Redis from "ioredis";
 import crypto from "crypto";
 import { ConfigService } from "@nestjs/config";
+import { InfluxService } from "influx/influx/influx.service";
 
 @Injectable()
 export class SqsService implements OnModuleInit, OnModuleDestroy {
@@ -20,7 +21,10 @@ export class SqsService implements OnModuleInit, OnModuleDestroy {
   private queueUrl = process.env.SQS_PATH;
   private polling = false;
   private redis: Redis;
-  constructor(private configService: ConfigService) {
+  constructor(
+    private configService: ConfigService,
+    private influxService: InfluxService
+  ) {
     this.sqsClient = new SQSClient({
       region: "ap-southeast-1",
       credentials: {
@@ -28,86 +32,67 @@ export class SqsService implements OnModuleInit, OnModuleDestroy {
         secretAccessKey: this.configService.get("AWS_SECRET_KEY"),
       },
     });
-    this.redis = new Redis({
-      host: this.configService.get("REDIS_HOST"),
-      port: Number(this.configService.get("REDIS_PORT")),
-    });
   }
 
-  async receiveAndDeleteMessages() {
+  async receiveMessages() {
+    const maxMessages = 10; // รับสูงสุด 10 ข้อความต่อครั้ง
     try {
       const command = new ReceiveMessageCommand({
         QueueUrl: this.queueUrl,
-        MaxNumberOfMessages: 1,
-        WaitTimeSeconds: 10, // long polling 10 sec
-        VisibilityTimeout: 30,
+        MaxNumberOfMessages: maxMessages,
+        WaitTimeSeconds: 10, // long polling 10 วินาที
+        VisibilityTimeout: 30, // ซ่อนข้อความ 30 วินาที หลังรับ
+        MessageAttributeNames: ["All"], // รับ attribute ด้วยถ้าต้องการ
       });
 
       const data = await this.sqsClient.send(command);
-      if (!data.Messages || data.Messages.length === 0) {
-        // ไม่มีข้อความใหม่
-        return;
-      }
-
-      for (const message of data.Messages) {
-        if (!message.Body || !message.ReceiptHandle) continue;
-        // console.log("Received message:", message.Body);
-        const hash = this.generateMessageHash(message.Body);
-        // เช็คข้อมูลตรงนี้
-        if (await this.hasProcessed(hash)) {
-          Logger.warn(`Skipped duplicate message: ${hash}`);
-          continue;
-        }
-
-        try {
+      if (data.Messages && data.Messages.length > 0) {
+        console.log(`Received ${data.Messages.length} messages.`);
+        for (const message of data.Messages) {
           const body = JSON.parse(message.Body);
-          const processedData = {
-            ...body,
-            timestamp: dayjs(body.timestamp * 1000).toDate(),
-          };
-          Logger.log("Processing:", processedData);
-
-          // ประมวลผลข้อมูลตรงนี้
-          await this.markProcessed(hash);
-          // ลบ message หลังจากประมวลผล
-          if (message.ReceiptHandle) {
-            //   console.log("message >>>", message);
-            //   await this.deleteMessage(message.ReceiptHandle);
+          for (const machines of body.machines) {
+            await this.influxService.writePointFromJson({
+              measurement: "temperature",
+              tags: {
+                machine_id:
+                  machines["position"]?.[0]?.["detail"]?.[
+                    "machine_id"
+                  ]?.toString() || "",
+              },
+              fields: {
+                temperature:
+                  machines["position"]?.[0]?.["detail"]?.["temperature"],
+                command_id:
+                  machines["position"]?.[0]?.["detail"]?.["command_id"] || "",
+              },
+              timestamp: new Date(),
+            });
           }
-          Logger.log(`Deleted message: ${hash}`);
-        } catch (error) {
-          Logger.error("Processing error:", error);
+          // ตัวอย่างลบข้อความหลังประมวลผลเสร็จ
+          // const deleteCommand = new DeleteMessageCommand({
+          //   QueueUrl: queueUrl,
+          //   ReceiptHandle: message.ReceiptHandle,
+          // });
+          // await this.sqsClient.send(deleteCommand);
         }
+        return data.Messages.map((el) => {
+          const body = JSON.parse(el.Body);
+          return {
+            ...body,
+            timestamp: dayjs(body["timestamp"] * 1000).toDate(),
+            gw: {
+              ...body["gw"],
+              lastHeartbeat: dayjs(body["gw"]["lastHeartbeat"] * 1000).toDate(),
+            },
+          };
+        });
+      } else {
+        console.log("No messages received.");
+        return [];
       }
     } catch (error) {
-      Logger.error("Polling error:", error);
+      console.error("Error receiving messages:", error);
     }
-  }
-
-  async deleteMessage(receiptHandle: string) {
-    const command = new DeleteMessageCommand({
-      QueueUrl: this.queueUrl,
-      ReceiptHandle: receiptHandle,
-    });
-
-    try {
-      await this.sqsClient.send(command);
-    } catch (err) {
-      console.error("Error deleting message:", err);
-    }
-  }
-
-  private generateMessageHash(body: string): string {
-    return crypto.createHash("sha256").update(body).digest("hex");
-  }
-
-  async hasProcessed(hash: string): Promise<boolean> {
-    const exists = await this.redis.exists(`sqs:processed:${hash}`);
-    return exists === 1;
-  }
-
-  async markProcessed(hash: string): Promise<void> {
-    await this.redis.set(`sqs:processed:${hash}`, "1", "EX", 3600); // expires in 1 hour
   }
 
   // ฟังก์ชัน polling แบบวนลูปเรื่อย ๆ
@@ -116,7 +101,7 @@ export class SqsService implements OnModuleInit, OnModuleDestroy {
 
     while (this.polling) {
       console.log("start :", dayjs().toDate());
-      await this.receiveAndDeleteMessages();
+      await this.receiveMessages();
       // รอ 1 วินาที ก่อน poll รอบใหม่ (ลดโหลด)
       await new Promise((r) => setTimeout(r, 15000));
     }
