@@ -113,7 +113,7 @@ export class SqsService implements OnModuleInit, OnModuleDestroy {
 
   // เริ่ม polling เมื่อโมดูลเริ่มต้น
   async onModuleInit() {
-    this.startPolling();
+    // this.startPolling();
   }
 
   // หยุด polling เมื่อโมดูลถูกปิด

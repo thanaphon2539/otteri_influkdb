@@ -89,18 +89,20 @@ export class InfluxService {
     const start = dayjs(params.start).toISOString();
     const stop = dayjs(params.stop).toISOString();
 
-    const fluxQuery = `
+    let fluxQuery = `
     from(bucket: "soltempbucket")
       |> range(start: time(v: ${JSON.stringify(
         start
       )}), stop: time(v: ${JSON.stringify(stop)}))
       |> filter(fn: (r) => r["_measurement"] == "temperature")
-      |> filter(fn: (r) => r["machine_id"] == "${params.machineId}")
       |> filter(fn: (r) => 
         r["_field"] == "command_id" or 
         r["_field"] == "temperature"
       )
   `;
+    if (params.machineId) {
+      fluxQuery += `|> filter(fn: (r) => r["machine_id"] == "${params.machineId}")`;
+    }
 
     const dataMapObj: Record<string, any> = {};
     await new Promise<void>((resolve, reject) => {
@@ -135,32 +137,32 @@ export class InfluxService {
           data: temperatureData,
         },
       ],
-      chart: {
-        height: 350,
-        type: "line",
-        zoom: {
-          enabled: false,
-        },
-      },
-      dataLabels: {
-        enabled: false,
-      },
-      stroke: {
-        curve: "straight",
-      },
-      title: {
-        text: "Temperature Over Time",
-        align: "left",
-      },
-      grid: {
-        row: {
-          colors: ["#f3f3f3", "transparent"],
-          opacity: 0.5,
-        },
-      },
       xaxis: {
         categories: categories,
       },
+      // chart: {
+      //   height: 350,
+      //   type: "line",
+      //   zoom: {
+      //     enabled: false,
+      //   },
+      // },
+      // dataLabels: {
+      //   enabled: false,
+      // },
+      // stroke: {
+      //   curve: "straight",
+      // },
+      // title: {
+      //   text: "Temperature Over Time",
+      //   align: "left",
+      // },
+      // grid: {
+      //   row: {
+      //     colors: ["#f3f3f3", "transparent"],
+      //     opacity: 0.5,
+      //   },
+      // },
     };
     return options;
   }

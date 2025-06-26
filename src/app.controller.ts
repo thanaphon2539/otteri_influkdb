@@ -46,7 +46,7 @@ export class AppController {
     );
   }
 
-  @Get("influxdbquery")
+  @Get("dashboard/machine")
   query(@Query() query: QueryParamsDto) {
     return this.influxService.queryData(query);
   }
