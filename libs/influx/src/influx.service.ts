@@ -68,7 +68,7 @@ export class InfluxService {
 
     try {
       await this.writeApi.flush();
-      console.log("Write success");
+      // console.log("Write success");
       return { success: true };
     } catch (error) {
       console.error("Write error", error);
@@ -76,95 +76,219 @@ export class InfluxService {
     }
   }
 
-  writePoint() {
-    const point = new Point("temperature").floatField("timestamp", Date.now());
-    this.writeApi.writePoint(point);
-    this.writeApi
-      .close()
-      .then(() => console.log("Write success"))
-      .catch((err) => console.error("Write error", err));
+  async writeMany(
+    dataPoints: {
+      measurement: string;
+      tags: Record<string, string>;
+      fields: Record<string, any>;
+      timestamp: Date;
+    }[]
+  ) {
+    const points = dataPoints.map((d) => {
+      const p = new Point(d.measurement).timestamp(d.timestamp);
+      Object.entries(d.tags).forEach(([key, val]) => p.tag(key, val));
+      Object.entries(d.fields).forEach(([key, val]) => {
+        if (typeof val === "number") {
+          p.floatField(key, val);
+        } else if (typeof val === "string") {
+          p.stringField(key, val);
+        }
+      });
+      return p;
+    });
+
+    this.writeApi.writePoints(points);
+    await this.writeApi.flush(); // สำคัญมาก
   }
 
-  async queryData(params: { start: string; stop: string; machineId: string }) {
+  // async queryData(params: {
+  //   start: string;
+  //   stop: string;
+  //   machineId: string;
+  //   time: string;
+  // }) {
+  //   const start = dayjs(params.start).toISOString();
+  //   const stop = dayjs(params.stop).toISOString();
+
+  //   let fluxQuery = `
+  //   from(bucket: "soltempbucket")
+  //     |> range(start: time(v: ${JSON.stringify(
+  //       start
+  //     )}), stop: time(v: ${JSON.stringify(stop)}))
+  //     |> filter(fn: (r) => r["_measurement"] == "temperature")
+  //     |> filter(fn: (r) =>
+  //       r["_field"] == "command_id" or
+  //       r["_field"] == "temperature"
+  //     )
+  // `;
+  //   if (params.machineId) {
+  //     fluxQuery += `|> filter(fn: (r) => r["machine_id"] == "${params.machineId}")`;
+  //   }
+
+  //   const dataMapObj: Record<string, any> = {};
+  //   await new Promise<void>((resolve, reject) => {
+  //     this.queryApi.queryRows(fluxQuery, {
+  //       next: (row, tableMeta) => {
+  //         const o = tableMeta.toObject(row);
+  //         const timeKey = o._time?.toString();
+  //         if (!dataMapObj[timeKey]) {
+  //           dataMapObj[timeKey] = { _time: timeKey };
+  //         }
+  //         dataMapObj[timeKey][o._field] = o._value;
+  //       },
+  //       error: (error) => {
+  //         console.error("Error from InfluxDB:", error);
+  //         reject(error);
+  //       },
+  //       complete: () => {
+  //         resolve();
+  //       },
+  //     });
+  //   });
+
+  //   const result = Object.values(dataMapObj);
+  //   const categories = result.map((item) =>
+  //     new Date(item._time).toLocaleTimeString()
+  //   );
+  //   const temperatureData = result.map((item) => item.temperature);
+  //   const options = {
+  //     series: [
+  //       {
+  //         name: "Temperature",
+  //         data: temperatureData,
+  //       },
+  //     ],
+  //     xaxis: {
+  //       categories: categories,
+  //     },
+  //   };
+  //   return options;
+  // }
+
+  async queryData(params: {
+    start: string;
+    stop: string;
+    machineId: string;
+    time: string; // "1hr", "6hr", "1day", etc.
+  }) {
     const start = dayjs(params.start).toISOString();
     const stop = dayjs(params.stop).toISOString();
 
-    let fluxQuery = `
-    from(bucket: "soltempbucket")
-      |> range(start: time(v: ${JSON.stringify(
-        start
-      )}), stop: time(v: ${JSON.stringify(stop)}))
-      |> filter(fn: (r) => r["_measurement"] == "temperature")
-      |> filter(fn: (r) => 
-        r["_field"] == "command_id" or 
-        r["_field"] == "temperature"
-      )
-  `;
-    if (params.machineId) {
-      fluxQuery += `|> filter(fn: (r) => r["machine_id"] == "${params.machineId}")`;
+    let every = "1m";
+    switch (params.time) {
+      case "1hr":
+        every = "1m";
+        break;
+      case "6hr":
+        every = "5m";
+        break;
+      case "1day":
+        every = "15m";
+        break;
+      case "3day":
+        every = "30m";
+        break;
+      case "5day":
+        every = "1h";
+        break;
     }
 
-    const dataMapObj: Record<string, any> = {};
-    await new Promise<void>((resolve, reject) => {
-      this.queryApi.queryRows(fluxQuery, {
-        next: (row, tableMeta) => {
-          const o = tableMeta.toObject(row);
-          const timeKey = o._time?.toString();
-          if (!dataMapObj[timeKey]) {
-            dataMapObj[timeKey] = { _time: timeKey };
-          }
-          dataMapObj[timeKey][o._field] = o._value;
-        },
-        error: (error) => {
-          console.error("Error from InfluxDB:", error);
-          reject(error);
-        },
-        complete: () => {
-          resolve();
-        },
-      });
-    });
+    // ------ Flux Query 1: temperature (mean) ------
+    let tempQuery = `
+      from(bucket: "soltempbucket")
+        |> range(start: time(v: ${JSON.stringify(
+          start
+        )}), stop: time(v: ${JSON.stringify(stop)}))
+        |> filter(fn: (r) => r["_measurement"] == "temperature")
+        |> filter(fn: (r) => r["_field"] == "temperature")
+    `;
 
-    const result = Object.values(dataMapObj);
+    if (params.machineId) {
+      tempQuery += `\n|> filter(fn: (r) => r["machine_id"] == "${params.machineId}")`;
+    }
+
+    tempQuery += `
+      |> aggregateWindow(every: ${every}, fn: mean, createEmpty: false)
+      |> yield(name: "mean")
+    `;
+
+    // ------ Flux Query 2: command_id (last) ------
+    let commandQuery = `
+      from(bucket: "soltempbucket")
+        |> range(start: time(v: ${JSON.stringify(
+          start
+        )}), stop: time(v: ${JSON.stringify(stop)}))
+        |> filter(fn: (r) => r["_measurement"] == "temperature")
+        |> filter(fn: (r) => r["_field"] == "command_id")
+    `;
+
+    if (params.machineId) {
+      commandQuery += `\n|> filter(fn: (r) => r["machine_id"] == "${params.machineId}")`;
+    }
+
+    commandQuery += `
+      |> aggregateWindow(every: ${every}, fn: last, createEmpty: false)
+      |> yield(name: "last")
+    `;
+
+    // Map: timestamp → merged object
+    const dataMapObj: Record<string, any> = {};
+
+    const runQuery = async (fluxQuery: string) => {
+      await new Promise<void>((resolve, reject) => {
+        this.queryApi.queryRows(fluxQuery, {
+          next: (row, tableMeta) => {
+            const o = tableMeta.toObject(row);
+            const timeKey = o._time?.toString();
+            if (!dataMapObj[timeKey]) {
+              dataMapObj[timeKey] = { _time: timeKey };
+            }
+            dataMapObj[timeKey][o._field] = o._value;
+          },
+          error: (error) => {
+            console.error("Error from InfluxDB:", error);
+            reject(error);
+          },
+          complete: () => {
+            resolve();
+          },
+        });
+      });
+    };
+
+    await runQuery(tempQuery);
+    await runQuery(commandQuery);
+
+    // Sort & format
+    const result = Object.values(dataMapObj).sort(
+      (a: any, b: any) =>
+        new Date(a._time).getTime() - new Date(b._time).getTime()
+    );
+
     const categories = result.map((item) =>
       new Date(item._time).toLocaleTimeString()
     );
-    const temperatureData = result.map((item) => item.temperature);
-    const options = {
+    const temperatureData = result.map((item) =>
+      item.temperature != null ? Number(item.temperature).toFixed(2) : null
+    );
+    // const commandIdData = result.map((item) => item.command_id);
+
+    return {
       series: [
         {
           name: "Temperature",
           data: temperatureData,
         },
+        // {
+        //   name: "Command ID",
+        //   data: commandIdData,
+        // },
       ],
       xaxis: {
         categories: categories,
       },
-      // chart: {
-      //   height: 350,
-      //   type: "line",
-      //   zoom: {
-      //     enabled: false,
-      //   },
-      // },
-      // dataLabels: {
-      //   enabled: false,
-      // },
-      // stroke: {
-      //   curve: "straight",
-      // },
-      // title: {
-      //   text: "Temperature Over Time",
-      //   align: "left",
-      // },
-      // grid: {
-      //   row: {
-      //     colors: ["#f3f3f3", "transparent"],
-      //     opacity: 0.5,
-      //   },
-      // },
+      raw: result, // หากอยาก debug เพิ่มเติม
     };
-    return options;
   }
 
   async deleteData(measurement: string, start: string, stop: string) {

@@ -7,6 +7,7 @@ class QueryParamsDto {
   start: string; // เช่น ISO date string
   stop: string; // เช่น ISO date string
   machineId: string; // optional
+  time: string
 }
 @Controller()
 export class AppController {
@@ -54,5 +55,10 @@ export class AppController {
   @Get("sqsquery")
   sqsquery() {
     return this.sqsService.receiveMessages();
+  }
+
+  @Get("sqsquery/checktotal")
+  querySQSdataTotalAll() {
+    return this.sqsService.querySQSdataTotalAll();
   }
 }
